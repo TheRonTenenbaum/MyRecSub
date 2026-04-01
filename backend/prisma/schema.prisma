@@ -1,0 +1,182 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Gmail Accounts ────────────────────────────────────────────
+model GmailAccount {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  accessToken     String
+  refreshToken    String
+  tokenExpiresAt  DateTime?
+  lastHistoryId   String?
+  lastSyncAt      DateTime?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  emails Email[]
+
+  @@index([isActive])
+}
+
+// ─── Emails ────────────────────────────────────────────────────
+model Email {
+  id              String   @id @default(cuid())
+  gmailMessageId  String   @unique
+  accountId       String
+  subject         String?
+  fromAddress     String?
+  fromName        String?
+  receivedAt      DateTime?
+  snippet         String?
+  hasAttachments  Boolean  @default(false)
+  isInvoice       Boolean  @default(false)
+  detectionScore  Float    @default(0)
+  processed       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  account   GmailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  documents Document[]
+
+  @@index([accountId])
+  @@index([isInvoice])
+  @@index([processed])
+  @@index([receivedAt])
+}
+
+// ─── Documents (Invoices/Receipts) ─────────────────────────────
+model Document {
+  id                  String   @id @default(cuid())
+  emailId             String?
+  supplierId          String?
+  subscriptionId      String?
+
+  // Document info
+  documentType        String?   // invoice, receipt, tax_invoice, credit_note, proforma
+  invoiceNumber       String?
+  issueDate           DateTime?
+  dueDate             DateTime?
+  description         String?
+
+  // Financial data
+  currency            String   @default("ILS")
+  subtotal            Float?
+  vatRate             Float?
+  vatAmount           Float?
+  totalAmount         Float?
+  paymentMethod       String?
+
+  // Source data
+  rawText             String?
+  filePath            String?
+  fileName            String?
+  fileType            String?   // pdf, image, html
+  fileSize            Int?
+
+  // Extraction metadata
+  extractionMethod    String?   // text, ocr, ai, manual
+  extractionScore     Float    @default(0)
+  status              String   @default("pending") // pending, processing, completed, error, verified
+  errorMessage        String?
+
+  // User edits
+  isVerified          Boolean  @default(false)
+  tags                String?  // JSON array stored as string
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  email        Email?        @relation(fields: [emailId], references: [id], onDelete: SetNull)
+  supplier     Supplier?     @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([supplierId])
+  @@index([subscriptionId])
+  @@index([issueDate])
+  @@index([status])
+  @@index([documentType])
+  @@index([totalAmount])
+}
+
+// ─── Suppliers ─────────────────────────────────────────────────
+model Supplier {
+  id              String   @id @default(cuid())
+  name            String
+  normalizedName  String
+  businessId      String?
+  email           String?
+  category        String?
+  totalSpent      Float    @default(0)
+  documentCount   Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  documents     Document[]
+  subscriptions Subscription[]
+
+  @@unique([normalizedName])
+  @@index([name])
+  @@index([totalSpent])
+}
+
+// ─── Subscriptions (Recurring Charges) ─────────────────────────
+model Subscription {
+  id              String   @id @default(cuid())
+  supplierId      String
+  averageAmount   Float
+  currency        String   @default("ILS")
+  frequency       String   // monthly, quarterly, yearly, weekly
+  lastChargeAt    DateTime?
+  nextExpectedAt  DateTime?
+  isActive        Boolean  @default(true)
+  confidence      Float    @default(0)
+  priceHistory    String?  // JSON array of {date, amount}
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  supplier  Supplier   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  documents Document[]
+
+  @@index([supplierId])
+  @@index([isActive])
+  @@index([nextExpectedAt])
+}
+
+// ─── Processing Jobs ───────────────────────────────────────────
+model ProcessingJob {
+  id          String   @id @default(cuid())
+  type        String   // sync_emails, process_document, detect_subscriptions
+  status      String   @default("queued") // queued, running, completed, failed
+  entityId    String?
+  progress    Int      @default(0)
+  total       Int      @default(0)
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([type])
+}
+
+// ─── App Settings (Singleton) ──────────────────────────────────
+model AppSettings {
+  id                  String  @id @default("singleton")
+  language            String  @default("he")
+  theme               String  @default("light")
+  openaiApiKey        String?
+  syncIntervalMinutes Int     @default(15)
+  autoSync            Boolean @default(true)
+  firstRunCompleted   Boolean @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
